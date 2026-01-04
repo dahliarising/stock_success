@@ -1,4 +1,4 @@
-"""Model registry and helpers."""
+"""예측 모델 레지스트리."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ from sklearn.neural_network import MLPRegressor
 def model_registry(random_state: int = 42) -> Dict[str, object]:
     return {
         "Ridge": Ridge(alpha=1.0),
-        "RandomForest": RandomForestRegressor(n_estimators=300, random_state=random_state),
-        "MLP": MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=300, random_state=random_state),
+        "RandomForest": RandomForestRegressor(
+            n_estimators=500,
+            max_depth=None,
+            random_state=random_state,
+            n_jobs=-1,
+        ),
+        "MLP": MLPRegressor(hidden_layer_sizes=(256, 128), max_iter=400, random_state=random_state),
     }
 
 
