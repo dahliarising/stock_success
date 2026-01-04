@@ -10,7 +10,6 @@ import pandas as pd
 from .data import fetch_raw_data
 from .forecasting import ForecastResult, train_and_forecast
 from .selection import SelectionResult, train_selector
-from .models import instantiate_model
 
 
 def run_selection_pipeline(
@@ -18,14 +17,12 @@ def run_selection_pipeline(
     years_of_history: int = 5,
     forecast_horizon: int = 30,
     lookbacks=(20, 60, 120),
-    model_name: str | None = None,
 ) -> SelectionResult:
     """Fetch data and train the recommendation model."""
     end = datetime.today()
     start = end - timedelta(days=365 * years_of_history)
     history: Dict[str, pd.DataFrame] = fetch_raw_data(tickers, start=start, end=end)
-    model = instantiate_model(model_name, random_state=42) if model_name else None
-    return train_selector(history, lookbacks=lookbacks, forecast_horizon=forecast_horizon, model=model)
+    return train_selector(history, lookbacks=lookbacks, forecast_horizon=forecast_horizon)
 
 
 def forecast_selected_ticker(
