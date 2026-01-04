@@ -1,77 +1,31 @@
-"""Modeling utilities for recommending promising tickers."""
+"""산업군 필터링 및 Top10 선택 로직."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List
-
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-
-from .features import FeatureSet, compute_features, latest_feature_row
 
 
-@dataclass
-class SelectionResult:
-    model: RandomForestRegressor
-    cv_score: float
-    scored_candidates: pd.DataFrame
-    feature_columns: List[str]
+def filter_and_rank(
+    predictions: pd.DataFrame, sector: str = "ALL", industry: str = "ALL", top_k: int = 10
+) -> pd.DataFrame:
+    df = predictions.copy()
+    if sector and sector != "ALL":
+        df = df[df["sector"] == sector]
+    if industry and industry != "ALL":
+        df = df[df["industry"] == industry]
 
-
-def train_selector(
-    price_history: Dict[str, pd.DataFrame],
-    lookbacks: Iterable[int] = (20, 60, 120),
-    forecast_horizon: int = 30,
-    n_estimators: int = 400,
-    random_state: int = 42,
-) -> SelectionResult:
-    """Train a regression model that predicts 30-day forward returns."""
-    frames: List[pd.DataFrame] = []
-    feature_columns: List[str] | None = None
-    for ticker, prices in price_history.items():
-        dataset: FeatureSet = compute_features(prices, lookbacks=lookbacks, forecast_horizon=forecast_horizon)
-        feature_columns = dataset.feature_columns
-        frame = dataset.features.copy()
-        frame["forward_return"] = dataset.target
-        frame["ticker"] = ticker
-        frames.append(frame)
-
-    if not frames or feature_columns is None:
-        raise ValueError("No data available to train selector.")
-
-    full = pd.concat(frames, ignore_index=True)
-    X = full[feature_columns]
-    y = full["forward_return"]
-
-    model = RandomForestRegressor(n_estimators=n_estimators, random_state=random_state)
-    n_splits = min(5, len(X) - 1)
-    if n_splits >= 2:
-        cv = TimeSeriesSplit(n_splits=n_splits)
-        neg_mse = cross_val_score(model, X, y, cv=cv, scoring="neg_mean_squared_error")
-        cv_score = float(np.mean(np.sqrt(-neg_mse)))
-        model.fit(X, y)
-    else:
-        model.fit(X, y)
-        cv_score = float(np.sqrt(np.mean((model.predict(X) - y) ** 2)))
-
-    scored = []
-    for ticker, prices in price_history.items():
-        latest_row, feature_cols = latest_feature_row(prices, lookbacks=lookbacks)
-        predicted_return = model.predict(latest_row)[0]
-        scored.append(
-            {
-                "ticker": ticker,
-                "predicted_forward_return": predicted_return,
-            }
-        )
-
-    scored_df = pd.DataFrame(scored).sort_values("predicted_forward_return", ascending=False)
-    return SelectionResult(
-        model=model,
-        cv_score=cv_score,
-        scored_candidates=scored_df,
-        feature_columns=feature_cols,
-    )
+    df = df.sort_values("predicted_return_1y", ascending=False).head(top_k)
+    df.insert(0, "rank", range(1, len(df) + 1))
+    return df[
+        [
+            "rank",
+            "ticker",
+            "company",
+            "sector",
+            "industry",
+            "current_price",
+            "predicted_return_1y",
+            "predicted_price_1y",
+            "predicted_return_std",
+        ]
+    ]
