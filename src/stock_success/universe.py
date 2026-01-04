@@ -1,4 +1,4 @@
-"""Utilities for managing ticker universes."""
+"""티커 유니버스 로딩 유틸리티."""
 
 from __future__ import annotations
 
@@ -12,18 +12,9 @@ import pandas as pd
 UNIVERSE_DEFAULT_PATH = Path("data/universe_sp500.csv")
 
 
-def parse_universe(df: pd.DataFrame) -> List[str]:
-    """Extract a unique, uppercased ticker list from a DataFrame.
-
-    The first column is used if no obvious ticker column name is found.
-    """
-    if df.empty:
-        return []
-
-    candidate_cols = [c for c in df.columns if c.lower() in {"ticker", "tickers", "symbol", "symbols"}]
-    column = candidate_cols[0] if candidate_cols else df.columns[0]
-    tickers = (
-        df[column]
+def _normalize_tickers(values: Iterable[str]) -> List[str]:
+    return (
+        pd.Series(values)
         .astype(str)
         .str.strip()
         .str.upper()
@@ -32,7 +23,16 @@ def parse_universe(df: pd.DataFrame) -> List[str]:
         .unique()
         .tolist()
     )
-    return tickers
+
+
+def parse_universe(df: pd.DataFrame) -> List[str]:
+    """DataFrame에서 티커 컬럼을 파싱한다."""
+    if df.empty:
+        return []
+
+    candidate_cols = [c for c in df.columns if c.lower() in {"ticker", "tickers", "symbol", "symbols"}]
+    column = candidate_cols[0] if candidate_cols else df.columns[0]
+    return _normalize_tickers(df[column])
 
 
 def load_universe_from_csv(path: Path | str) -> List[str]:
@@ -45,7 +45,14 @@ def load_universe_from_bytes(content: bytes) -> List[str]:
     return parse_universe(df)
 
 
-def load_default_universe() -> List[str]:
-    if not UNIVERSE_DEFAULT_PATH.exists():
+def load_default_universe(path: Path | str = UNIVERSE_DEFAULT_PATH) -> List[str]:
+    target = Path(path)
+    if not target.exists():
         return []
-    return load_universe_from_csv(UNIVERSE_DEFAULT_PATH)
+    return load_universe_from_csv(target)
+
+
+def load_universe(uploaded: bytes | None, fallback_path: Path | str = UNIVERSE_DEFAULT_PATH) -> List[str]:
+    if uploaded:
+        return load_universe_from_bytes(uploaded)
+    return load_default_universe(fallback_path)
