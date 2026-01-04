@@ -26,6 +26,5 @@ def filter_and_rank(
             "current_price",
             "predicted_return_1y",
             "predicted_price_1y",
-            "predicted_return_std",
         ]
     ]
