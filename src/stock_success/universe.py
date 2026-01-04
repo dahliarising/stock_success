@@ -50,9 +50,3 @@ def load_default_universe(path: Path | str = UNIVERSE_DEFAULT_PATH) -> List[str]
     if not target.exists():
         return []
     return load_universe_from_csv(target)
-
-
-def load_universe(uploaded: bytes | None, fallback_path: Path | str = UNIVERSE_DEFAULT_PATH) -> List[str]:
-    if uploaded:
-        return load_universe_from_bytes(uploaded)
-    return load_default_universe(fallback_path)
