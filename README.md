@@ -30,14 +30,3 @@ Outputs are written to the `artifacts/` directory:
 
 - `candidate_scores.csv` lists tickers ranked by predicted 30-day forward return.
 - `<TICKER>_forecast.csv` stores the joined historical closes and 1-year forecast.
-
-## Streamlit app
-
-Run the lightweight UI locally:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-PYTHONPATH=src streamlit run app.py
-```

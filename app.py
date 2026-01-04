@@ -3,18 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-import sys
 
+import pandas as pd
 import streamlit as st
 
-# Ensure local src/ is on the import path when running `streamlit run app.py`
-ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
-from stock_success import run_selection_pipeline
+from stock_success import fetch_raw_data, run_selection_pipeline
 
 
 st.set_page_config(page_title="Stock Success", layout="wide")
@@ -59,3 +52,4 @@ if run_button:
                         datetime.today()
                     )
                 )
+
