@@ -20,6 +20,27 @@ st.set_page_config(page_title="Stock Success Dashboard", layout="wide")
 st.title("현재 주가와 모델이 본 1년 후 가격")
 st.caption("현재가, 예상 1년 수익률, 예상 1년 가격을 중심으로 설계")
 
+st.set_page_config(page_title="Stock Success Dashboard", layout="wide")
+st.title("현재 주가와 모델이 본 1년 후 가격")
+st.caption("현재가, 예상 1년 수익률, 예상 1년 가격을 중심으로 설계")
+
+
+@st.cache_data
+def cached_run_pipeline(
+    upload_bytes: bytes | None,
+    years_of_history: int,
+    model_name: str,
+    feature_set: str,
+    horizon_days: int,
+) -> tuple[pd.DataFrame, dict, object, pd.DataFrame, pd.Series, dict]:
+    tickers = load_universe(upload_bytes)
+    return run_pipeline(
+        tickers=tickers,
+        years_of_history=years_of_history,
+        model_name=model_name,
+        forecast_horizon=horizon_days,
+        feature_set=feature_set,
+    )
 
 @st.cache_data
 def cached_run_pipeline(
