@@ -1,4 +1,4 @@
-"""Metadata caching for sector/industry lookups."""
+"""섹터/산업 메타데이터 캐싱."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable
 
+import pandas as pd
 import yfinance as yf
 
 
@@ -49,3 +50,11 @@ def fetch_meta_for_tickers(tickers: Iterable[str], cache_path: Path | str = DEFA
         save_meta_cache(cache, cache_path)
 
     return cache
+
+
+def meta_dataframe(tickers: Iterable[str], cache_path: Path | str = DEFAULT_CACHE_PATH) -> pd.DataFrame:
+    meta = fetch_meta_for_tickers(tickers, cache_path=cache_path)
+    df = pd.DataFrame.from_dict(meta, orient="index")
+    df.index.name = "ticker"
+    df = df.reset_index()
+    return df
