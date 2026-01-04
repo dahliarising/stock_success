@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+from io import BytesIO
 from typing import List
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-from stock_success.eval import cross_validate_models
-from stock_success.explain import permutation_importance_df, top_feature_contributions
 from stock_success.meta import meta_dataframe
 from stock_success.models import model_registry
 from stock_success.pipeline import run_pipeline
 from stock_success.selection import filter_and_rank
-from stock_success.universe import load_universe
+from stock_success.universe import load_default_universe, load_universe_from_bytes
+from stock_success.explain import permutation_importance_df, top_feature_contributions
+from stock_success.eval import cross_validate_models
+from stock_success.features import compute_features
 
 st.set_page_config(page_title="Stock Success Dashboard", layout="wide")
 st.title("현재 주가와 모델이 본 1년 후 가격")
@@ -36,143 +38,145 @@ def cached_run_pipeline(
         feature_set=feature_set,
     )
 
+st.set_page_config(page_title="Stock Success", layout="wide")
+st.title("이 주식의 현재 가격과 1년 후 예상 가격은?")
+st.caption("현재가, 예상 1년 수익률, 예상 1년 가격을 중심으로 설계된 대시보드")
+
+
+@st.cache_data
+def load_universe() -> List[str]:
+    return load_default_universe()
+
 
 with st.sidebar:
-    st.header("입력")
-    universe_choice = st.selectbox("유니버스", ["S&P500 샘플", "사용자 CSV 업로드"])
+    st.header("분석 설정")
+    universe_choice = st.radio("유니버스", ["S&P500 샘플", "사용자 CSV 업로드"], index=0)
     upload = None
     if universe_choice == "사용자 CSV 업로드":
-        upload = st.file_uploader("CSV 업로드", type=["csv"])
-    model_name = st.selectbox("모델", list(model_registry().keys()))
-    feature_set = st.selectbox("Feature Set", ["price", "fundamentals", "risk"], format_func=lambda x: {
-        "price": "Price/Technical",
-        "fundamentals": "+Fundamentals",
-        "risk": "+Risk/Liquidity",
-    }[x])
-    horizon = st.selectbox("Horizon", [252, 30], format_func=lambda h: "1Y" if h == 252 else "30D")
-    years_of_history = st.slider("데이터 히스토리(년)", 2, 10, 5)
+        upload = st.file_uploader("티커 CSV 업로드", type=["csv"])
+    model_name = st.selectbox("모델", options=list(model_registry().keys()), index=0)
+    years_of_history = st.slider("히스토리(년)", 2, 10, 5)
+    sector_filter = st.text_input("Sector 필터 (ALL 입력 시 전체)", value="ALL")
+    industry_filter = st.text_input("Industry 필터 (ALL 입력 시 전체)", value="ALL")
     run_button = st.button("예측 실행", type="primary")
 
 
 if not run_button:
-    st.info("사이드바에서 설정 후 실행하세요.")
+    st.info("사이드바에서 설정 후 '예측 실행' 버튼을 누르세요.")
     st.stop()
 
-if universe_choice == "사용자 CSV 업로드" and not upload:
-    st.error("CSV를 업로드하세요.")
+if universe_choice == "사용자 CSV 업로드":
+    if not upload:
+        st.error("CSV를 업로드하세요.")
+        st.stop()
+    try:
+        tickers = load_universe_from_bytes(upload.read())
+    except Exception as exc:  # pragma: no cover - UI safeguard
+        st.error(f"CSV 파싱 실패: {exc}")
+        st.stop()
+else:
+    tickers = load_universe()
+
+if not tickers:
+    st.error("티커 리스트가 비어 있습니다.")
     st.stop()
 
-with st.spinner("데이터 로딩 및 예측 중..."):
-    predictions, history, model, train_X, train_y, latest_features = cached_run_pipeline(
-        upload.read() if upload else None,
-        years_of_history=years_of_history,
-        model_name=model_name,
-        feature_set=feature_set,
-        horizon_days=horizon,
-    )
+with st.spinner("데이터 수집 및 예측 중..."):
+    try:
+        predictions, history, model, train_X, train_y, latest_features = run_pipeline(
+            tickers,
+            years_of_history=years_of_history,
+            model_name=model_name,
+        )
+    except Exception as exc:  # pragma: no cover - UI safeguard
+        st.error(f"파이프라인 실패: {exc}")
+        st.stop()
 
-meta = meta_dataframe(predictions["ticker"].tolist())
-sectors = ["ALL"] + sorted(meta["sector"].fillna("Unknown").unique())
-selected_sector = st.sidebar.selectbox("Sector", sectors)
-filtered_industries = meta[meta["sector"] == selected_sector]["industry"].fillna("Unknown").unique()
-industries = ["ALL"] + sorted(filtered_industries)
-selected_industry = st.sidebar.selectbox("Industry", industries)
+meta_df = meta_dataframe(predictions["ticker"].tolist())
+sectors = sorted([s for s in meta_df["sector"].dropna().unique() if s])
+industries = sorted([i for i in meta_df["industry"].dropna().unique() if i])
 
-filtered = filter_and_rank(predictions, sector=selected_sector, industry=selected_industry, top_k=10)
-
-ranking_tab, ticker_tab, explain_tab, perf_tab, download_tab = st.tabs(
-    ["Ranking", "Ticker Detail", "Explain", "Model Performance", "Downloads"]
+filtered = filter_and_rank(
+    predictions,
+    sector=sector_filter if sector_filter else "ALL",
+    industry=industry_filter if industry_filter else "ALL",
+    top_k=10,
 )
 
-with ranking_tab:
-    st.subheader("산업군 Top10")
-    st.dataframe(
-        filtered,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "current_price": st.column_config.NumberColumn("현재가", format="$%.2f"),
-            "predicted_price_1y": st.column_config.NumberColumn("예상 1년 가격", format="$%.2f"),
-            "predicted_return_1y": st.column_config.NumberColumn("예상 1년 수익률", format="%.2f%%"),
-            "predicted_return_std": st.column_config.NumberColumn("불확실성", format="%.4f"),
-        },
-    )
+st.subheader("산업군 Top10")
+st.dataframe(
+    filtered,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "current_price": st.column_config.NumberColumn("현재가", format="$%.2f"),
+        "predicted_price_1y": st.column_config.NumberColumn("예상 1년 가격", format="$%.2f"),
+        "predicted_return_1y": st.column_config.NumberColumn("예상 1년 수익률", format="%.2f%%", help="모델 예측 1년 후 수익률"),
+    },
+)
 
-with ticker_tab:
-    ticker = st.selectbox("티커 선택", filtered["ticker"].tolist())
-    row = predictions[predictions["ticker"] == ticker].iloc[0]
-    feature_row = latest_features.get(ticker)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("현재 주가", f"${row['current_price']:.2f}")
-    col2.metric("예상 1년 수익률", f"{row['predicted_return_1y']*100:.2f}%")
-    col3.metric("예상 1년 가격", f"${row['predicted_price_1y']:.2f}")
-    col4.metric("예상 불확실성", f"{row['predicted_return_std']:.4f}")
+if filtered.empty:
+    st.warning("필터 결과가 없습니다.")
+    st.stop()
 
-    price_hist = history[ticker].reset_index().rename(columns={"Date": "date"})
-    line = (
-        alt.Chart(price_hist)
-        .mark_line()
-        .encode(x="date:T", y=alt.Y("Close:Q", title="가격"), tooltip=["date:T", "Close:Q"])
-        .properties(height=300)
-    )
-    forecast_point = pd.DataFrame({"date": [price_hist["date"].max()], "pred": [row["predicted_price_1y"]]})
-    point = alt.Chart(forecast_point).mark_point(color="red", size=80).encode(x="date:T", y="pred:Q")
-    st.altair_chart(line + point, use_container_width=True)
+selected_ticker = st.selectbox("티커 선택", options=filtered["ticker"].tolist())
+current_row = predictions[predictions["ticker"] == selected_ticker].iloc[0]
+feature_row = latest_features.get(selected_ticker)
 
+col1, col2, col3 = st.columns(3)
+col1.metric("현재 주가", f"${current_row['current_price']:.2f}")
+col2.metric("예상 1년 수익률", f"{current_row['predicted_return_1y']*100:.2f}%")
+col3.metric("예상 1년 가격", f"${current_row['predicted_price_1y']:.2f}")
+
+price_history = history[selected_ticker].reset_index().rename(columns={"Date": "date"})
+price_chart = (
+    alt.Chart(price_history)
+    .mark_line()
+    .encode(x="date:T", y=alt.Y("Close:Q", title="가격"), tooltip=["date:T", "Close:Q"])
+    .properties(height=300)
+)
+forecast_point = pd.DataFrame(
+    {
+        "date": [price_history["date"].max()],
+        "predicted": [current_row["predicted_price_1y"]],
+    }
+)
+pred_point_chart = alt.Chart(forecast_point).mark_point(color="red", size=80).encode(x="date:T", y="predicted:Q")
+
+st.altair_chart(price_chart + pred_point_chart, use_container_width=True)
+
+with st.expander("다운로드"):
+    raw_csv = price_history.to_csv(index=False).encode("utf-8")
+    st.download_button("Raw OHLCV CSV", data=raw_csv, file_name=f"{selected_ticker}_ohlcv.csv", mime="text/csv")
+
+    if feature_row is not None:
+        feature_csv = feature_row.reset_index(drop=True).to_csv(index=False).encode("utf-8")
+        st.download_button("Feature CSV", data=feature_csv, file_name=f"{selected_ticker}_features.csv", mime="text/csv")
+
+    pred_csv = predictions.to_csv(index=False).encode("utf-8")
+    st.download_button("Prediction CSV", data=pred_csv, file_name="predictions.csv", mime="text/csv")
+
+
+st.subheader("선정 근거")
+tabs = st.tabs(["Feature 테이블", "Feature 중요도", "모델 성능"])
+
+with tabs[0]:
     if feature_row is not None:
         st.dataframe(feature_row.T, use_container_width=True)
+    else:
+        st.info("특징을 계산할 수 없습니다.")
 
-with explain_tab:
-    st.subheader("Feature 중요도 및 선정 근거")
-    importance_df = permutation_importance_df(model, train_X, train_y, n_repeats=3)
+with tabs[1]:
+    importance_df = permutation_importance_df(model, train_X, train_y, n_repeats=5)
+    contrib = top_feature_contributions(feature_row.iloc[0], importance_df, top_n=10) if feature_row is not None else None
     st.bar_chart(importance_df.set_index("feature")["importance_mean"])
-    ticker_choice = st.selectbox("티커 선택(선정 근거)", filtered["ticker"].tolist())
-    feature_row = latest_features.get(ticker_choice)
-    if feature_row is not None:
-        contrib = top_feature_contributions(feature_row.iloc[0], importance_df, top_n=10)
+    if contrib is not None:
         st.dataframe(contrib, use_container_width=True)
 
-with perf_tab:
-    st.subheader("모델 성능 비교")
-    eval_models = {name: mdl for name, mdl in model_registry().items()}
+with tabs[2]:
+    eval_models = {name: mdl for name, mdl in model_registry().items() if name in ["Ridge", "RandomForest", "MLP"]}
     perf = cross_validate_models(eval_models, train_X, train_y, n_splits=3)
     st.dataframe(perf.sort_values("rmse"), use_container_width=True, hide_index=True)
 
-with download_tab:
-    st.subheader("다운로드")
-    selected = st.selectbox("다운로드 티커", filtered["ticker"].tolist())
-    price_csv = history[selected].reset_index().to_csv(index=False).encode("utf-8")
-    st.download_button("Raw OHLCV CSV", price_csv, file_name=f"{selected}_ohlcv.csv", mime="text/csv")
-    feature_row = latest_features.get(selected)
-    if feature_row is not None:
-        st.download_button(
-            "Feature Table CSV",
-            feature_row.reset_index(drop=True).to_csv(index=False).encode("utf-8"),
-            file_name=f"{selected}_features.csv",
-            mime="text/csv",
-        )
-    st.download_button(
-        "Predictions CSV",
-        predictions.to_csv(index=False).encode("utf-8"),
-        file_name="predictions.csv",
-        mime="text/csv",
-    )
 
-st.markdown("---")
-st.subheader("Glossary")
-st.markdown(
-    """
-- **RMSE**: 제곱근 평균제곱오차, 예측 오차의 규모를 나타냄
-- **MAE**: 평균절대오차, 예측 오차의 절대값 평균
-- **IC (Spearman)**: 예측과 실제 순위 간 상관계수, 랭킹 품질 지표
-- **Directional Accuracy**: 방향성 적중률(상승/하락 일치 비율)
-- **RSI**: 상대강도지수, 과매수/과매도 판단 지표
-- **MACD**: 장단기 지수이동평균 차이로 추세 전환을 포착하는 지표
-- **ATR**: Average True Range, 변동성 측정
-- **PE/ PB**: 주가수익비/주가순자산비, 밸류에이션 지표
-- **EPS**: 주당순이익, 수익성 지표
-- **FCF**: Free Cash Flow, 현금 창출력 지표
-- **D/E**: 부채비율, 재무 레버리지
-- **Sharpe**: 위험 대비 초과수익률 지표
-    """
-)
+st.caption("모든 예측은 교육용 예시입니다. 투자 결정은 본인 책임입니다.")

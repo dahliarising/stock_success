@@ -1,4 +1,4 @@
-"""섹터/산업 및 펀더멘털 메타데이터 캐싱."""
+"""섹터/산업 메타데이터 캐싱."""
 
 from __future__ import annotations
 
@@ -76,10 +76,3 @@ def meta_dataframe(tickers: Iterable[str], cache_path: Path | str = DEFAULT_CACH
     df.index.name = "ticker"
     df = df.reset_index()
     return df
-
-
-def split_meta(meta_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    base_cols = ["ticker", "company", "sector", "industry"]
-    base = meta_df[base_cols]
-    fundamentals = meta_df.drop(columns=[c for c in base_cols if c in meta_df.columns], errors="ignore")
-    return base, fundamentals
