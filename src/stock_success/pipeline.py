@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Tuple
 
+import numpy as np
 import pandas as pd
+from sklearn.utils import resample
 
 from .data import fetch_raw_data
 from .features import FeatureSet, compute_features, latest_feature_row

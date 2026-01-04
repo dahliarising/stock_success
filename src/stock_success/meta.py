@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Tuple
 
 import pandas as pd
 import yfinance as yf
 
 
 DEFAULT_CACHE_PATH = Path("data/meta_cache.json")
+FUNDAMENTAL_FIELDS = [
+    "trailingPE",
+    "priceToBook",
+    "marketCap",
+    "revenueGrowth",
+    "profitMargins",
+    "debtToEquity",
+    "freeCashflow",
+    "beta",
+    "averageVolume",
+    "averageDailyVolume10Day",
+]
 
 
 def load_meta_cache(path: Path | str = DEFAULT_CACHE_PATH) -> Dict[str, dict]:
@@ -28,6 +40,16 @@ def save_meta_cache(meta: Dict[str, dict], path: Path | str = DEFAULT_CACHE_PATH
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
+def _extract_meta(data: dict, ticker: str) -> dict:
+    info: dict = {}
+    info["sector"] = data.get("sector") or "Unknown"
+    info["industry"] = data.get("industry") or "Unknown"
+    info["company"] = data.get("shortName") or data.get("longName") or ticker
+    for field in FUNDAMENTAL_FIELDS:
+        info[field] = data.get(field)
+    return info
+
+
 def fetch_meta_for_tickers(tickers: Iterable[str], cache_path: Path | str = DEFAULT_CACHE_PATH) -> Dict[str, dict]:
     cache = load_meta_cache(cache_path)
     updated = False
@@ -35,15 +57,11 @@ def fetch_meta_for_tickers(tickers: Iterable[str], cache_path: Path | str = DEFA
     for ticker in tickers:
         if ticker in cache:
             continue
-        info = {}
         try:
             data = yf.Ticker(ticker).info or {}
-            info["sector"] = data.get("sector") or "Unknown"
-            info["industry"] = data.get("industry") or "Unknown"
-            info["company"] = data.get("shortName") or data.get("longName") or ticker
+            cache[ticker] = _extract_meta(data, ticker)
         except Exception:
-            info = {"sector": "Unknown", "industry": "Unknown", "company": ticker}
-        cache[ticker] = info
+            cache[ticker] = _extract_meta({}, ticker)
         updated = True
 
     if updated:

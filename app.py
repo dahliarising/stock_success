@@ -16,6 +16,27 @@ from stock_success.explain import permutation_importance_df, top_feature_contrib
 from stock_success.eval import cross_validate_models
 from stock_success.features import compute_features
 
+st.set_page_config(page_title="Stock Success Dashboard", layout="wide")
+st.title("현재 주가와 모델이 본 1년 후 가격")
+st.caption("현재가, 예상 1년 수익률, 예상 1년 가격을 중심으로 설계")
+
+
+@st.cache_data
+def cached_run_pipeline(
+    upload_bytes: bytes | None,
+    years_of_history: int,
+    model_name: str,
+    feature_set: str,
+    horizon_days: int,
+) -> tuple[pd.DataFrame, dict, object, pd.DataFrame, pd.Series, dict]:
+    tickers = load_universe(upload_bytes)
+    return run_pipeline(
+        tickers=tickers,
+        years_of_history=years_of_history,
+        model_name=model_name,
+        forecast_horizon=horizon_days,
+        feature_set=feature_set,
+    )
 
 st.set_page_config(page_title="Stock Success", layout="wide")
 st.title("이 주식의 현재 가격과 1년 후 예상 가격은?")
