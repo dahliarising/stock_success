@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from stock_success.data import fetch_raw_data
+from stock_success.data import fetch_ohlcv
 from stock_success.forecasting import train_and_forecast
 from stock_success.selection import train_selector
 
@@ -27,7 +27,7 @@ def main():
 
     end = datetime.today()
     start = end - timedelta(days=365 * args.years)
-    history = fetch_raw_data(args.tickers, start=start, end=end)
+    history = fetch_ohlcv(args.tickers, start=start, end=end)
 
     selection = train_selector(history)
     print(f"Cross-validated RMSE (lower is better): {selection.cv_score:.6f}")

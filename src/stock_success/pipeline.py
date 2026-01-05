@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.utils import resample
 
-from .data import fetch_raw_data
+from .data import fetch_ohlcv
 from .features import FeatureSet, compute_features, latest_feature_row
 from .meta import meta_dataframe
 from .models import instantiate_model
@@ -18,7 +18,7 @@ from .models import instantiate_model
 def fetch_history(tickers: Iterable[str], years_of_history: int = 5) -> Dict[str, pd.DataFrame]:
     end = datetime.today()
     start = end - timedelta(days=365 * years_of_history)
-    return fetch_raw_data(tickers, start=start, end=end)
+    return fetch_ohlcv(tickers, start=start, end=end)
 
 
 def build_training_data(

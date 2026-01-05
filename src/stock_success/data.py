@@ -1,55 +1,41 @@
-"""Data loading utilities for U.S. equities."""
+"""OHLCV 다운로드 유틸리티."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable
 
-import pandas as pd
 import yfinance as yf
 
 
-def fetch_raw_data(
-    tickers: Iterable[str],
-    start: str | datetime,
-    end: Optional[str | datetime] = None,
-    interval: str = "1d",
-) -> Dict[str, pd.DataFrame]:
-    """Download adjusted OHLCV data for the requested tickers.
+def fetch_ohlcv(tickers: Iterable[str], start: str | datetime, end: str | datetime | None = None, interval: str = "1d") -> Dict[str, object]:
+    """yfinance를 통해 조정 OHLCV 데이터를 내려받는다.
 
     Args:
-        tickers: Collection of ticker symbols (e.g., ``["AAPL", "MSFT"]``).
-        start: Start date (inclusive).
-        end: End date (exclusive). Defaults to today if ``None``.
-        interval: Sampling interval supported by yfinance (``"1d"``, ``"1wk"``, etc).
+        tickers: 티커 문자열 이터러블.
+        start: 시작 일자(예: ``"2020-01-01"``).
+        end: 종료 일자(생략 시 오늘).
+        interval: yfinance에서 지원하는 간격.
 
     Returns:
-        A mapping of ticker -> DataFrame with OHLCV columns.
+        티커별 ``pandas.DataFrame`` 딕셔너리.
     """
 
     ticker_list = list(tickers)
     if not ticker_list:
         raise ValueError("tickers cannot be empty.")
 
-    # yfinance can return a MultiIndex when requesting multiple tickers. Normalize to a
-    # dictionary of single-ticker frames for consistency.
     df = yf.download(
         tickers=ticker_list,
         start=start,
         end=end,
         interval=interval,
-        progress=False,
         auto_adjust=True,
+        progress=False,
         group_by="ticker",
     )
 
-    if isinstance(df.columns, pd.MultiIndex):
-        result: Dict[str, pd.DataFrame] = {}
-        for ticker in df.columns.get_level_values(0).unique():
-            subframe = df[ticker].copy()
-            subframe.dropna(how="all", inplace=True)
-            result[ticker] = subframe
-        return result
+    if hasattr(df, "columns") and getattr(df, "columns", None) is not None and getattr(df, "columns", None).nlevels > 1:
+        return {ticker: df[ticker].dropna(how="all").copy() for ticker in df.columns.get_level_values(0).unique()}
 
-    # Single ticker case: return a dictionary with one entry.
     return {ticker_list[0]: df.dropna(how="all").copy()}

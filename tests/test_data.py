@@ -1,9 +1,8 @@
 import pytest
 
-from stock_success.data import fetch_raw_data
+from stock_success.data import fetch_ohlcv
 
 
-def test_fetch_raw_data_empty_input_raises():
+def test_fetch_ohlcv_empty_input_raises():
     with pytest.raises(ValueError):
-        fetch_raw_data([], start="2020-01-01", end="2020-02-01")
-
+        fetch_ohlcv([], start="2020-01-01", end="2020-02-01")
