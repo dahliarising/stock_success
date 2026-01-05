@@ -1,44 +1,30 @@
-# Stock Success Dashboard
+# Stock Success
 
-현재가와 모델이 예측한 1년 후 가격을 중심으로 종목을 선별하는 Streamlit 대시보드.
+yfinance를 이용해 간단한 유니버스와 OHLCV 데이터를 다루는 헬퍼 모듈.
 
-## 실행 방법
+## 설치 및 실행 예시
 ```bash
 python -m pip install -r requirements.txt
-PYTHONPATH=src python -m streamlit run app.py
+
+# 예시: 샘플 유니버스 로딩 후 OHLCV 다운로드
+PYTHONPATH=src python - <<'PY'
+from stock_success import fetch_ohlcv, load_default_universe
+
+universe = load_default_universe()
+print("Loaded", len(universe), "tickers")
+print(universe[:5])
+
+history = fetch_ohlcv(universe[:3], start="2024-01-01")
+for t, frame in history.items():
+    print(f"\n{t} sample:")
+    print(frame.head())
+PY
 ```
 
-## 데이터 소스
-- 가격/거래량: `yfinance.download`
-- 메타데이터(섹터/산업/회사명) 및 펀더멘털: `yfinance.Ticker.info`
+## 포함된 파일
+- `data/universe_sample.csv`: `ticker` 단일 컬럼, 약 30개 티커 샘플.
+- `src/stock_success/data.py`: `fetch_ohlcv` 함수로 yfinance에서 조정 OHLCV 다운로드.
+- `src/stock_success/universe.py`: CSV/바이트에서 티커 유니버스를 파싱하는 유틸리티.
 
-## 주요 화면
-- 사이드바: 유니버스/섹터/산업/모델/피처셋/호라이즌 선택, CSV 업로드
-- 탭: Ranking, Ticker Detail, Explain, Model Performance, Downloads
-- KPI: 현재가, 예상 1년 수익률, 예상 1년 가격, 불확실성
-
-## 캐싱
-- `st.cache_data`를 활용해 데이터 다운로드와 예측 결과를 캐싱
-- `data/meta_cache.json`에 메타/펀더멘털 캐시 저장
-
-## 테스트
-```bash
-pytest -q
-```
-
-## Glossary
-- RMSE: 제곱근 평균제곱오차
-- MAE: 평균절대오차
-- IC (Spearman): 예측·실제 순위 상관
-- RSI: 상대강도지수
-- MACD: 이동평균 수렴·확산 지표
-- ATR: 평균 진폭
-- PE/PB: 밸류에이션 지표
-- EPS: 주당순이익
-- FCF: 잉여현금흐름
-- D/E: 부채비율
-- Sharpe: 위험 대비 성과
-
-## Inspiration
-- [Streamlit Finance Dashboard Examples](https://github.com/streamlit/streamlit-example)
-- [Quantitative Finance Apps](https://github.com/plotly/dash-stock-tickers)
+## 참고
+- 기본 유니버스 경로: `data/universe_sample.csv`

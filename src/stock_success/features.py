@@ -1,9 +1,9 @@
-"""특징 엔지니어링 유틸리티."""
+"""OHLCV에서 기술적 특징을 생성한다."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple, Dict
+from typing import Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -16,368 +16,80 @@ class FeatureSet:
     feature_columns: List[str]
 
 
-def _attach_features(df: pd.DataFrame, lookbacks: Iterable[int]) -> Tuple[pd.DataFrame, List[str]]:
+def _window_triplet(lookbacks: Iterable[int]) -> Tuple[int, int, int]:
+    windows = list(dict.fromkeys(int(x) for x in lookbacks))
+    if not windows:
+        windows = [5, 10, 20]
+    if len(windows) == 1:
+        windows.append(windows[0] * 2)
+    if len(windows) == 2:
+        windows.append(windows[-1] * 2)
+    return windows[0], windows[1], windows[2]
+
+
+def _technical_features(df: pd.DataFrame, lookbacks: Iterable[int]) -> Tuple[pd.DataFrame, List[str]]:
+    short, mid, long = _window_triplet(lookbacks)
     feature_columns: List[str] = []
-    for lb in lookbacks:
-        df[f"volatility_{lb}"] = df["return"].rolling(lb).std() * np.sqrt(252)
-        df[f"momentum_{lb}"] = df["Close"].pct_change(lb)
-        df[f"sma_ratio_{lb}"] = df["Close"] / df["Close"].rolling(lb).mean()
-        df[f"volume_change_{lb}"] = df["Volume"].pct_change(lb)
-        df[f"max_drawdown_{lb}"] = _max_drawdown(df["Close"], window=lb)
-        df[f"downside_vol_{lb}"] = df["return"].where(df["return"] < 0).rolling(lb).std() * np.sqrt(252)
-        feature_columns.extend(
-            [
-                f"volatility_{lb}",
-                f"momentum_{lb}",
-                f"sma_ratio_{lb}",
-                f"volume_change_{lb}",
-                f"max_drawdown_{lb}",
-                f"downside_vol_{lb}",
-            ]
-        )
+
+    df["return_1d"] = df["Close"].pct_change()
+    df[f"return_{short}d"] = df["Close"].pct_change(short)
+    df[f"return_{mid}d"] = df["Close"].pct_change(mid)
+
+    df[f"volatility_{short}d"] = df["Close"].pct_change().rolling(short).std() * np.sqrt(252)
+    df[f"volatility_{mid}d"] = df["Close"].pct_change().rolling(mid).std() * np.sqrt(252)
+
+    df[f"sma_ratio_{short}d"] = df["Close"] / df["Close"].rolling(short).mean()
+    df[f"sma_ratio_{mid}d"] = df["Close"] / df["Close"].rolling(mid).mean()
+
+    ema_short = df["Close"].ewm(span=short, adjust=False).mean()
+    ema_mid = df["Close"].ewm(span=mid, adjust=False).mean()
+    df[f"ema_gap_{short}_{mid}"] = ema_short - ema_mid
+
+    df[f"volume_change_{short}d"] = df["Volume"].pct_change(short)
+    df[f"volume_change_{mid}d"] = df["Volume"].pct_change(mid)
+
+    feature_columns.extend(
+        [
+            "return_1d",
+            f"return_{short}d",
+            f"return_{mid}d",
+            f"volatility_{short}d",
+            f"volatility_{mid}d",
+            f"sma_ratio_{short}d",
+            f"sma_ratio_{mid}d",
+            f"ema_gap_{short}_{mid}",
+            f"volume_change_{short}d",
+            f"volume_change_{mid}d",
+        ]
+    )
+
     return df, feature_columns
 
 
 def compute_features(
     prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
+    lookbacks: Iterable[int] = (5, 10, 20),
+    forecast_horizon: int = 30,
 ) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 1년 후 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = _attach_features(df, lookbacks=lookbacks)
+    """OHLCV에서 기술 피처 10개와 forward 수익률 타깃을 생성한다."""
 
-    # RSI
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    window = 14
-    roll_up = gain.rolling(window).mean()
-    roll_down = loss.rolling(window).mean()
-    rs = roll_up / roll_down.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-    feature_columns.append("rsi_14")
+    df = prices.copy().sort_index()
+    df, feature_columns = _technical_features(df, lookbacks=lookbacks)
 
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["macd"] = ema_12 - ema_26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    feature_columns.extend(["macd", "macd_signal"])
-
-    # ATR
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["atr_14"] = tr.rolling(14).mean()
-    feature_columns.append("atr_14")
-
-    return df, feature_columns
-
-
-def _attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    cols = []
-    for key, value in fundamentals.items():
-        df[key] = value
-        cols.append(key)
-    return df, cols
-
-
-def compute_features(
-    prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
-    feature_set: str = "price",
-    fundamentals: Dict[str, float] | None = None,
-) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 forward 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = _price_technical_features(df, lookbacks=lookbacks)
-
-    if feature_set in {"fundamentals", "risk"} and fundamentals:
-        df, fundamental_cols = _attach_fundamental_features(df, fundamentals)
-        feature_columns.extend(fundamental_cols)
-    if feature_set == "risk":
-        df["dollar_volume_20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
-        df["beta_hint"] = fundamentals.get("beta") if fundamentals else None
-        feature_columns.extend(["dollar_volume_20", "beta_hint"])
-
-    # RSI
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    window = 14
-    roll_up = gain.rolling(window).mean()
-    roll_down = loss.rolling(window).mean()
-    rs = roll_up / roll_down.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-    feature_columns.append("rsi_14")
-
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["macd"] = ema_12 - ema_26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    feature_columns.extend(["macd", "macd_signal"])
-
-    # ATR
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["atr_14"] = tr.rolling(14).mean()
-    feature_columns.append("atr_14")
-
-    return df, feature_columns
-
-
-def _attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    cols = []
-    for key, value in fundamentals.items():
-        df[key] = value
-        cols.append(key)
-    return df, cols
-
-
-def compute_features(
-    prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
-    feature_set: str = "price",
-    fundamentals: Dict[str, float] | None = None,
-) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 forward 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = _price_technical_features(df, lookbacks=lookbacks)
-
-    if feature_set in {"fundamentals", "risk"} and fundamentals:
-        df, fundamental_cols = _attach_fundamental_features(df, fundamentals)
-        feature_columns.extend(fundamental_cols)
-    if feature_set == "risk":
-        df["dollar_volume_20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
-        df["beta_hint"] = fundamentals.get("beta") if fundamentals else None
-        feature_columns.extend(["dollar_volume_20", "beta_hint"])
-
-    # RSI
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    window = 14
-    roll_up = gain.rolling(window).mean()
-    roll_down = loss.rolling(window).mean()
-    rs = roll_up / roll_down.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-    feature_columns.append("rsi_14")
-
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["macd"] = ema_12 - ema_26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    feature_columns.extend(["macd", "macd_signal"])
-
-    # ATR
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["atr_14"] = tr.rolling(14).mean()
-    feature_columns.append("atr_14")
-
-    return df, feature_columns
-
-
-def attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    cols = []
-    for key, value in fundamentals.items():
-        df[key] = value
-        cols.append(key)
-    return df, cols
-
-
-def compute_features(
-    prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
-    feature_set: str = "price",
-    fundamentals: Dict[str, float] | None = None,
-) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 forward 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = price_technical_features(df, lookbacks=lookbacks)
-
-    if feature_set in {"fundamentals", "risk"} and fundamentals:
-        df, fundamental_cols = attach_fundamental_features(df, fundamentals)
-        feature_columns.extend(fundamental_cols)
-    if feature_set == "risk":
-        df["dollar_volume_20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
-        df["beta_hint"] = fundamentals.get("beta") if fundamentals else None
-        feature_columns.extend(["dollar_volume_20", "beta_hint"])
-
-    # RSI
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    window = 14
-    roll_up = gain.rolling(window).mean()
-    roll_down = loss.rolling(window).mean()
-    rs = roll_up / roll_down.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-    feature_columns.append("rsi_14")
-
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["macd"] = ema_12 - ema_26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    feature_columns.extend(["macd", "macd_signal"])
-
-    # ATR
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["atr_14"] = tr.rolling(14).mean()
-    feature_columns.append("atr_14")
-
-    return df, feature_columns
-
-
-# 호환성: 이전 캐시/직렬화된 객체가 기존 비공개 이름을 참조할 수 있으므로 alias를 유지한다.
-_price_technical_features = price_technical_features
-
-
-def attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    cols = []
-    for key, value in fundamentals.items():
-        df[key] = value
-        cols.append(key)
-    return df, cols
-
-
-# 호환성 alias
-_attach_fundamental_features = attach_fundamental_features
-
-
-def compute_features(
-    prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
-    feature_set: str = "price",
-    fundamentals: Dict[str, float] | None = None,
-) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 forward 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = price_technical_features(df, lookbacks=lookbacks)
-
-    if feature_set in {"fundamentals", "risk"} and fundamentals:
-        df, fundamental_cols = attach_fundamental_features(df, fundamentals)
-        feature_columns.extend(fundamental_cols)
-    if feature_set == "risk":
-        df["dollar_volume_20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
-        df["beta_hint"] = fundamentals.get("beta") if fundamentals else None
-        feature_columns.extend(["dollar_volume_20", "beta_hint"])
-
-    # RSI
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    window = 14
-    roll_up = gain.rolling(window).mean()
-    roll_down = loss.rolling(window).mean()
-    rs = roll_up / roll_down.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-    feature_columns.append("rsi_14")
-
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["macd"] = ema_12 - ema_26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    feature_columns.extend(["macd", "macd_signal"])
-
-    # ATR
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df["atr_14"] = tr.rolling(14).mean()
-    feature_columns.append("atr_14")
-
-    return df, feature_columns
-
-
-def attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    cols = []
-    for key, value in fundamentals.items():
-        df[key] = value
-        cols.append(key)
-    return df, cols
-
-
-# 호환성 wrapper: 이전 버전에서 사용하던 비공개 이름을 동일 동작으로 노출
-def _price_technical_features(df: pd.DataFrame, lookbacks: Iterable[int]) -> Tuple[pd.DataFrame, List[str]]:
-    return price_technical_features(df, lookbacks)
-
-
-def _attach_fundamental_features(df: pd.DataFrame, fundamentals: Dict[str, float]) -> Tuple[pd.DataFrame, List[str]]:
-    return attach_fundamental_features(df, fundamentals)
-
-
-def compute_features(
-    prices: pd.DataFrame,
-    lookbacks: Iterable[int] = (63, 126, 252),
-    forecast_horizon: int = 252,
-    feature_set: str = "price",
-    fundamentals: Dict[str, float] | None = None,
-) -> FeatureSet:
-    """OHLCV 시계열에서 학습용 특징과 forward 수익률 타깃을 생성한다."""
-    df = prices.copy()
-    df = df.sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = price_technical_features(df, lookbacks=lookbacks)
-
-    if feature_set in {"fundamentals", "risk"} and fundamentals:
-        df, fundamental_cols = attach_fundamental_features(df, fundamentals)
-        feature_columns.extend(fundamental_cols)
-    if feature_set == "risk":
-        df["dollar_volume_20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
-        df["beta_hint"] = fundamentals.get("beta") if fundamentals else None
-        feature_columns.extend(["dollar_volume_20", "beta_hint"])
-
-    df["forward_return"] = df["Close"].shift(-forecast_horizon) / df["Close"] - 1
-    df = df.dropna(subset=feature_columns + ["forward_return"])
+    df["future_return"] = df["Close"].shift(-forecast_horizon) / df["Close"] - 1
+    df = df.dropna(subset=feature_columns + ["future_return"])
 
     return FeatureSet(
         features=df[feature_columns].copy(),
-        target=df["forward_return"].copy(),
+        target=df["future_return"].copy(),
         feature_columns=feature_columns,
     )
 
 
-def latest_feature_row(
-    prices: pd.DataFrame, lookbacks: Iterable[int] = (63, 126, 252)
-) -> Tuple[pd.DataFrame, List[str]]:
-    """예측용 최신 특징 행을 (타깃 없이) 생성한다."""
+def latest_feature_row(prices: pd.DataFrame, lookbacks: Iterable[int] = (5, 10, 20)) -> Tuple[pd.DataFrame, List[str]]:
+    """가장 최근 시점의 특징 행을 반환한다."""
+
     df = prices.copy().sort_index()
-    df["return"] = df["Close"].pct_change()
-    df, feature_columns = _attach_features(df, lookbacks=lookbacks)
+    df, feature_columns = _technical_features(df, lookbacks=lookbacks)
     df = df.dropna(subset=feature_columns)
     return df[feature_columns].tail(1), feature_columns
-
-
-def _max_drawdown(close: pd.Series, window: int) -> pd.Series:
-    rolling_max = close.rolling(window).max()
-    drawdown = close / rolling_max - 1.0
-    return drawdown
