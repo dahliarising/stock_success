@@ -9,7 +9,7 @@ from typing import Iterable, List
 import pandas as pd
 
 
-UNIVERSE_DEFAULT_PATH = Path("data/universe_sp500.csv")
+UNIVERSE_DEFAULT_PATH = Path("data/universe_sample.csv")
 
 
 def _normalize_tickers(values: Iterable[str]) -> List[str]:
